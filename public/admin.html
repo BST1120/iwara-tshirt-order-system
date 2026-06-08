@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理画面 | いわら保育園 Tシャツ注文システム</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>管理画面</h1>
+      <p>デザインの登録・編集、Tシャツトリニティからの型・色・サイズ取得、注文一覧、集計確認、CSV出力ができます。</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="section kpis">
+      <div class="kpi"><div class="muted">登録デザイン数</div><strong id="kpiDesigns">0</strong></div>
+      <div class="kpi"><div class="muted">公開中デザイン数</div><strong id="kpiActive">0</strong></div>
+      <div class="kpi"><div class="muted">取得済みの型</div><strong id="kpiProducts">0</strong></div>
+      <div class="kpi"><div class="muted">注文件数</div><strong id="kpiOrders">0</strong></div>
+    </section>
+
+    <section class="section">
+      <div class="notice">
+        最初に <strong>「全デザインの型・色・サイズを取得」</strong> を押してください。<br>
+        各デザインページに掲載されている商品ページを読み込み、型・色・サイズ候補を注文ページに反映します。
+      </div>
+      <div id="busyBox" class="notice hidden" style="margin-top:12px;"></div>
+    </section>
+
+    <section class="section split">
+      <div class="form-card">
+        <h2>デザイン編集</h2>
+        <div class="field">
+          <label for="editDesignSelect">既存デザインを選択</label>
+          <select id="editDesignSelect"></select>
+        </div>
+        <form id="designForm">
+          <input type="hidden" id="designId" />
+          <div class="form-grid one-col">
+            <div class="field">
+              <label for="name">デザイン名</label>
+              <input id="name" required />
+            </div>
+            <div class="field">
+              <label for="source_url">TシャツトリニティURL</label>
+              <input id="source_url" />
+            </div>
+            <div class="field">
+              <label for="description">説明文</label>
+              <textarea id="description"></textarea>
+            </div>
+            <div class="field">
+              <label for="design_image_url">代表画像URL</label>
+              <input id="design_image_url" placeholder="Tシャツトリニティの代表画像URL、またはアップロード画像URL" />
+              <div class="helper">通常は「URLから代表画像を取得」で入ります。</div>
+            </div>
+            <div class="field">
+              <label for="design_image_file">代表画像アップロード</label>
+              <input id="design_image_file" type="file" accept="image/*" />
+            </div>
+            <div class="field">
+              <label for="colors">手動用の色 (name:hex をカンマ区切り)</label>
+              <input id="colors" placeholder="ホワイト:#f5f5f5, ブラック:#222222, ネイビー:#20324a" />
+              <div class="helper">商品ページ取得後は、型ごとの色が優先されます。</div>
+            </div>
+            <div class="field">
+              <label for="sizes">手動用サイズ (カンマ区切り)</label>
+              <input id="sizes" placeholder="S, M, L, XL, XXL" />
+              <div class="helper">商品ページ取得後は、型ごとのサイズが優先されます。</div>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="display_order">表示順</label>
+                <input id="display_order" type="number" min="0" />
+              </div>
+              <div class="field">
+                <label for="active">公開状態</label>
+                <div class="label-row">
+                  <input id="active" type="checkbox" checked /> 公開する
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="actions" style="margin-top:16px">
+            <button type="submit">保存</button>
+            <button type="button" class="secondary" id="fetchCurrentMeta">このデザインの代表画像を取得</button>
+            <button type="button" class="secondary" id="fetchAllMeta">全デザインの代表画像を取得</button>
+            <button type="button" class="secondary" id="scrapeAllProducts">全デザインの型・色・サイズを取得</button>
+            <a class="button secondary" href="/api/export/orders.csv">CSV出力</a>
+            <a class="button secondary" href="/" target="_blank">注文ページを見る</a>
+          </div>
+          <p id="saveMessage" class="success"></p>
+        </form>
+      </div>
+
+      <div class="form-card">
+        <h2>登録デザイン一覧</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>順番</th>
+                <th>デザイン名</th>
+                <th>状態</th>
+                <th>型数</th>
+                <th>取得済みの型</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="designTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>発注用集計</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>デザイン</th>
+              <th>型</th>
+              <th>色</th>
+              <th>サイズ</th>
+              <th>合計枚数</th>
+            </tr>
+          </thead>
+          <tbody id="summaryTbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section split">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>注文日時</th>
+              <th>職員名</th>
+              <th>所属</th>
+              <th>デザイン</th>
+              <th>型</th>
+              <th>色</th>
+              <th>サイズ</th>
+              <th>備考</th>
+            </tr>
+          </thead>
+          <tbody id="ordersTbody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>職員名</th>
+              <th>デザイン</th>
+              <th>型</th>
+              <th>備考 / 相談内容</th>
+            </tr>
+          </thead>
+          <tbody id="notesTbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
