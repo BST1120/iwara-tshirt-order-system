@@ -1,3 +1,4 @@
+
 const adminState = {
   designs: [],
   orders: [],
@@ -23,8 +24,10 @@ async function loadAdminData() {
 }
 
 function renderKpis(summary) {
+  const productCount = adminState.designs.reduce((sum, d) => sum + (d.products || []).length, 0);
   document.getElementById('kpiDesigns').textContent = adminState.designs.length;
   document.getElementById('kpiActive').textContent = adminState.designs.filter(d => d.active).length;
+  document.getElementById('kpiProducts').textContent = productCount;
   document.getElementById('kpiOrders').textContent = adminState.orders.length;
 }
 
@@ -32,16 +35,21 @@ function renderDesignTable() {
   const tbody = document.getElementById('designTbody');
   tbody.innerHTML = '';
   adminState.designs.forEach(design => {
+    const products = design.products || [];
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${design.display_order}</td>
-      <td>${escapeHtml(design.name)}</td>
+      <td>
+        <strong>${escapeHtml(design.name)}</strong><br>
+        <span class="small muted">${escapeHtml(design.source_url || '')}</span>
+      </td>
       <td>${design.active ? '公開中' : '非公開'}</td>
-      <td>${design.colors.map(c => c.name).join(', ')}</td>
-      <td>${design.sizes.join(', ')}</td>
+      <td>${products.length}種類</td>
+      <td>${products.slice(0, 3).map(p => escapeHtml(p.name)).join('<br>')}${products.length > 3 ? `<br><span class="muted small">ほか${products.length - 3}種類</span>` : ''}</td>
       <td>
         <div class="actions">
           <button class="ghost" data-edit="${design.id}">編集</button>
+          <button class="ghost" data-scrape="${design.id}">型・色・サイズ取得</button>
           <button class="danger" data-delete="${design.id}">削除</button>
         </div>
       </td>
@@ -49,11 +57,13 @@ function renderDesignTable() {
     tbody.appendChild(row);
   });
   tbody.querySelectorAll('[data-edit]').forEach(btn => btn.addEventListener('click', () => fillForm(Number(btn.dataset.edit))));
+  tbody.querySelectorAll('[data-scrape]').forEach(btn => btn.addEventListener('click', () => scrapeProducts(Number(btn.dataset.scrape))));
   tbody.querySelectorAll('[data-delete]').forEach(btn => btn.addEventListener('click', () => deleteDesign(Number(btn.dataset.delete))));
 }
 
 function populateEditSelect() {
   const select = document.getElementById('editDesignSelect');
+  const current = select.value;
   select.innerHTML = '<option value="">新規登録</option>';
   adminState.designs.forEach(design => {
     const option = document.createElement('option');
@@ -61,6 +71,7 @@ function populateEditSelect() {
     option.textContent = `${design.display_order}. ${design.name}`;
     select.appendChild(option);
   });
+  if (current) select.value = current;
 }
 
 function fillForm(id) {
@@ -131,6 +142,81 @@ async function saveDesign(event) {
   document.getElementById('saveMessage').textContent = '保存しました。';
 }
 
+async function fetchCurrentMeta() {
+  const id = document.getElementById('designId').value;
+  if (!id) {
+    alert('先に既存デザインを選択してください。');
+    return;
+  }
+  const res = await fetch(`/api/designs/${id}/fetch-meta`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overwriteName: false, overwriteDescription: false })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || '取得できませんでした');
+    return;
+  }
+  await loadAdminData();
+  fillForm(Number(id));
+  document.getElementById('saveMessage').textContent = 'URLから代表画像を取得しました。';
+}
+
+async function fetchAllMeta() {
+  if (!confirm('全デザインのURLから代表画像を取得します。実行しますか？')) return;
+  const res = await fetch('/api/designs/fetch-all-meta', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || '取得できませんでした');
+    return;
+  }
+  await loadAdminData();
+  const ok = data.results.filter(r => r.ok).length;
+  const ng = data.results.filter(r => !r.ok).length;
+  document.getElementById('saveMessage').textContent = `画像取得完了：成功 ${ok}件 / 失敗 ${ng}件`;
+}
+
+async function scrapeProducts(id) {
+  const design = adminState.designs.find(d => d.id === id);
+  if (!confirm(`${design?.name || 'このデザイン'} の型・色・サイズをTシャツトリニティから取得します。既存の型情報は上書きされます。実行しますか？`)) return;
+  setBusy(true, '取得中です。商品ページを順番に読み込むため、30秒〜数分かかることがあります。');
+  const res = await fetch(`/api/designs/${id}/scrape-products`, { method: 'POST' });
+  const data = await res.json();
+  setBusy(false);
+  if (!res.ok) {
+    alert(data.error || '取得できませんでした');
+    return;
+  }
+  await loadAdminData();
+  const ok = data.results.filter(r => r.ok).length;
+  const ng = data.results.filter(r => !r.ok).length;
+  document.getElementById('saveMessage').textContent = `取得完了：商品 ${data.found}件 / 成功 ${ok}件 / 失敗 ${ng}件`;
+}
+
+async function scrapeAllProducts() {
+  if (!confirm('全デザインの型・色・サイズをTシャツトリニティから取得します。既存の型情報は上書きされます。かなり時間がかかる場合があります。実行しますか？')) return;
+  setBusy(true, '全デザインを取得中です。商品ページを多数読み込むため、数分かかることがあります。');
+  const res = await fetch('/api/designs/scrape-all-products', { method: 'POST' });
+  const data = await res.json();
+  setBusy(false);
+  if (!res.ok) {
+    alert(data.error || '取得できませんでした');
+    return;
+  }
+  await loadAdminData();
+  const okDesigns = data.results.filter(r => r.ok).length;
+  const totalProducts = data.results.reduce((sum, r) => sum + (r.found || 0), 0);
+  document.getElementById('saveMessage').textContent = `全取得完了：成功デザイン ${okDesigns}件 / 商品候補 ${totalProducts}件`;
+}
+
+function setBusy(isBusy, message = '') {
+  const busy = document.getElementById('busyBox');
+  if (!busy) return;
+  busy.textContent = message;
+  busy.classList.toggle('hidden', !isBusy);
+}
+
 async function deleteDesign(id) {
   if (!confirm('このデザインを削除しますか？')) return;
   await fetch(`/api/designs/${id}`, { method: 'DELETE' });
@@ -147,6 +233,7 @@ function renderOrders(orders) {
       <td>${escapeHtml(order.staff_name)}</td>
       <td>${escapeHtml(order.department || '')}</td>
       <td>${escapeHtml(order.design_name)}</td>
+      <td>${escapeHtml(order.product_name || '')}</td>
       <td>${escapeHtml(order.color)}</td>
       <td>${escapeHtml(order.size)}</td>
       <td>${escapeHtml(order.note || '')}</td>
@@ -162,6 +249,7 @@ function renderSummary(rows) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${escapeHtml(row.design_name)}</td>
+      <td>${escapeHtml(row.product_name || '')}</td>
       <td>${escapeHtml(row.color)}</td>
       <td>${escapeHtml(row.size)}</td>
       <td>${row.total}</td>
@@ -178,6 +266,7 @@ function renderNotes(rows) {
     tr.innerHTML = `
       <td>${escapeHtml(row.staff_name)}</td>
       <td>${escapeHtml(row.design_name)}</td>
+      <td>${escapeHtml(row.product_name || '')}</td>
       <td>${escapeHtml(row.note)}</td>
     `;
     tbody.appendChild(tr);
@@ -191,6 +280,9 @@ function escapeHtml(str) {
 document.addEventListener('DOMContentLoaded', () => {
   loadAdminData();
   document.getElementById('designForm').addEventListener('submit', saveDesign);
+  document.getElementById('fetchCurrentMeta').addEventListener('click', fetchCurrentMeta);
+  document.getElementById('fetchAllMeta').addEventListener('click', fetchAllMeta);
+  document.getElementById('scrapeAllProducts').addEventListener('click', scrapeAllProducts);
   document.getElementById('editDesignSelect').addEventListener('change', e => {
     if (!e.target.value) {
       document.getElementById('designForm').reset();

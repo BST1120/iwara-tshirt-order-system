@@ -1,3 +1,4 @@
+
 const path = require('path');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
@@ -35,6 +36,13 @@ function get(sql, params = []) {
   });
 }
 
+async function addColumnIfMissing(table, column, definition) {
+  const columns = await all(`PRAGMA table_info(${table})`);
+  if (!columns.some(c => c.name === column)) {
+    await run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 async function initDb() {
   await run(`
     CREATE TABLE IF NOT EXISTS designs (
@@ -53,20 +61,45 @@ async function initDb() {
   `);
 
   await run(`
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      design_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      source_url TEXT,
+      image_url TEXT,
+      colors_json TEXT NOT NULL,
+      sizes_json TEXT NOT NULL,
+      active INTEGER DEFAULT 1,
+      display_order INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(design_id) REFERENCES designs(id)
+    )
+  `);
+
+  await run(`
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       staff_name TEXT NOT NULL,
       department TEXT,
       design_id INTEGER NOT NULL,
       design_name TEXT NOT NULL,
+      product_id INTEGER,
+      product_name TEXT,
+      product_url TEXT,
       color TEXT NOT NULL,
       size TEXT NOT NULL,
       quantity INTEGER DEFAULT 1,
       note TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(design_id) REFERENCES designs(id)
+      FOREIGN KEY(design_id) REFERENCES designs(id),
+      FOREIGN KEY(product_id) REFERENCES products(id)
     )
   `);
+
+  await addColumnIfMissing('orders', 'product_id', 'INTEGER');
+  await addColumnIfMissing('orders', 'product_name', 'TEXT');
+  await addColumnIfMissing('orders', 'product_url', 'TEXT');
 
   const countRow = await get('SELECT COUNT(*) AS count FROM designs');
   if (countRow.count === 0) {
@@ -99,7 +132,7 @@ async function initDb() {
         [
           name,
           sourceUrl,
-          '初期登録デザイン。必要に応じて色・サイズ・画像を管理画面で調整してください。',
+          '初期登録デザイン。管理画面の「全デザインの型・色・サイズを取得」でTシャツトリニティと同期してください。',
           '',
           JSON.stringify(defaultColors),
           JSON.stringify(defaultSizes),

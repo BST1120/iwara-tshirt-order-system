@@ -1,3 +1,4 @@
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -25,26 +26,227 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+function safeJson(value, fallback) {
+  try { return JSON.parse(value || ''); } catch { return fallback; }
+}
+
+function decodeHtml(str) {
+  return String(str || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripTags(html) {
+  return decodeHtml(String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' '));
+}
+
+function absoluteUrl(src, baseUrl) {
+  try {
+    if (!src) return '';
+    return new URL(src, baseUrl).toString();
+  } catch {
+    return src || '';
+  }
+}
+
+async function fetchHtml(url) {
+  if (!url || !/^https?:\/\//.test(url)) {
+    throw new Error('有効なURLを入力してください');
+  }
+  const response = await fetch(url, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 (compatible; IwaraTshirtOrderBot/1.0)',
+      'accept': 'text/html,application/xhtml+xml',
+    },
+  });
+  if (!response.ok) throw new Error(`ページ取得に失敗しました: ${response.status}`);
+  return await response.text();
+}
+
+function readMeta(html, key) {
+  const patterns = [
+    new RegExp(`<meta[^>]+property=["']${key}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${key}["'][^>]*>`, 'i'),
+    new RegExp(`<meta[^>]+name=["']${key}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${key}["'][^>]*>`, 'i'),
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) return decodeHtml(match[1]);
+  }
+  return '';
+}
+
+function pickMeta(html, baseUrl) {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = readMeta(html, 'og:title') || (titleMatch ? decodeHtml(titleMatch[1].trim()) : '');
+  const description = readMeta(html, 'og:description') || readMeta(html, 'description');
+  const image = readMeta(html, 'og:image') || readMeta(html, 'twitter:image') || readMeta(html, 'twitter:image:src') || '';
+  return {
+    title: title.replace(/\|デザインTシャツ通販.*$/, '').trim(),
+    description: description.trim(),
+    image: absoluteUrl(image, baseUrl),
+  };
+}
+
+const COLOR_NAMES = [
+  'ホワイト','ブラック','ネイビー','グレー','杢グレー','ミックスグレー','アッシュ','オートミール','アイボリー','ナチュラル',
+  'ベビーピンク','ライトピンク','ピンク','ホットピンク','レッド','バーガンディ','ワイン','オレンジ','イエロー','デイジー',
+  'ライトイエロー','ライム','ライムグリーン','グリーン','フォレスト','オリーブ','カーキ','ミント','アクア','ターコイズ',
+  'ライトブルー','サックス','ブルー','ロイヤルブルー','インディゴ','パープル','ラベンダー','ブラウン','チョコレート',
+  'チャコール','スミ','サンド','ベージュ','シルバー','ゴールド'
+];
+
+const COLOR_HEX = {
+  'ホワイト':'#f7f7f7','ブラック':'#222222','ネイビー':'#20324a','グレー':'#9aa0a6','杢グレー':'#a7adb4',
+  'ミックスグレー':'#9aa0a6','アッシュ':'#d9dcdf','オートミール':'#ddd1bd','アイボリー':'#f3ead8','ナチュラル':'#efe3c8',
+  'ベビーピンク':'#f7c4d8','ライトピンク':'#f3a6c5','ピンク':'#e76f9f','ホットピンク':'#d93175','レッド':'#c62828',
+  'バーガンディ':'#6f1d2e','ワイン':'#7b1e35','オレンジ':'#ef7d22','イエロー':'#ffd54f','デイジー':'#ffd42a',
+  'ライトイエロー':'#fff3a3','ライム':'#a8d64f','ライムグリーン':'#91c84a','グリーン':'#2e7d32','フォレスト':'#17452f',
+  'オリーブ':'#6f7d3c','カーキ':'#7a704f','ミント':'#9adbc8','アクア':'#6fd3dd','ターコイズ':'#2ca6a4',
+  'ライトブルー':'#90caf9','サックス':'#8ecae6','ブルー':'#1565c0','ロイヤルブルー':'#1f4fa3','インディゴ':'#243b6b',
+  'パープル':'#6a3fa0','ラベンダー':'#b69bd6','ブラウン':'#6d4c41','チョコレート':'#4b2f2a','チャコール':'#4b4f54',
+  'スミ':'#363636','サンド':'#cdbb91','ベージュ':'#c9b693','シルバー':'#cfd4d9','ゴールド':'#d4af37'
+};
+
+const SIZE_ORDER = ['80','90','100','110','120','130','140','150','160','WM','WL','XS','S','M','L','XL','XXL','XXXL','4XL','5XL'];
+
+function uniqueByName(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = typeof item === 'string' ? item : item.name;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function orderSizes(sizes) {
+  const set = new Set(sizes);
+  return SIZE_ORDER.filter(s => set.has(s)).concat([...set].filter(s => !SIZE_ORDER.includes(s)));
+}
+
+function extractColors(html) {
+  const found = [];
+  const altRegex = /alt=["']([^"']+)["']/gi;
+  let match;
+  while ((match = altRegex.exec(html))) {
+    const alt = decodeHtml(match[1]);
+    for (const name of COLOR_NAMES) {
+      if (alt === name || alt.includes(name)) {
+        found.push({ name, hex: COLOR_HEX[name] || '#dddddd' });
+      }
+    }
+  }
+
+  const text = stripTags(html);
+  for (const name of COLOR_NAMES) {
+    if (text.includes(name)) found.push({ name, hex: COLOR_HEX[name] || '#dddddd' });
+  }
+
+  return uniqueByName(found);
+}
+
+function extractSizes(html) {
+  const text = stripTags(html);
+  const index = text.indexOf('サイズ選択');
+  const context = index >= 0 ? text.slice(index, index + 1200) : text;
+  const found = [];
+  for (const size of SIZE_ORDER) {
+    const pattern = new RegExp(`(^|\\s|　)${size}($|\\s|　|サイズ|cm)`);
+    if (pattern.test(context) || pattern.test(text.slice(0, 4000))) found.push(size);
+  }
+
+  const selectMatch = text.match(/サイズを選択\s+(.{0,100})/);
+  if (selectMatch) {
+    const tokens = selectMatch[1].split(/\s+/).filter(Boolean);
+    for (const token of tokens) {
+      const clean = token.trim();
+      if (SIZE_ORDER.includes(clean)) found.push(clean);
+    }
+  }
+
+  return orderSizes(found);
+}
+
+function extractProductLinksFromDesignPage(html, baseUrl, designName) {
+  const links = [];
+  const regex = /<a[^>]+href=["']([^"']*\/product\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match;
+  while ((match = regex.exec(html))) {
+    const href = absoluteUrl(match[1], baseUrl);
+    const text = stripTags(match[2]);
+    if (!href || !/\/product\/\d+/.test(href)) continue;
+    if (links.some(l => l.url === href)) continue;
+    // 商品一覧以外の重複リンクが混ざる可能性があるため、デザイン名またはTシャツ/缶バッジ等の商品名を含むものを優先
+    if (text && (text.includes(designName.slice(0, 4)) || /Tシャツ|ロングTシャツ|ビッグ|オーガニック|缶バッジ|パーカー|スウェット|ポロシャツ|バッグ/.test(text))) {
+      links.push({ url: href, text });
+    }
+  }
+  return links.slice(0, 30);
+}
+
+async function scrapeProduct(productUrl) {
+  const html = await fetchHtml(productUrl);
+  const meta = pickMeta(html, productUrl);
+  const pageText = stripTags(html);
+  const baseMatch = pageText.match(/ベースアイテム\s+([^\n\r]+?)(?:\s+[^ ]+の特徴|の特徴|素材・仕様|品番)/);
+  const baseItem = baseMatch ? decodeHtml(baseMatch[1]).replace(/\s+/g, ' ').trim() : '';
+  const name = baseItem || meta.title.replace(/^.*?[｜|]\s*/, '').replace(/^.*?（(.+?)）.*$/, '$1').trim() || meta.title;
+  const colors = extractColors(html);
+  const sizes = extractSizes(html);
+
+  return {
+    name,
+    source_url: productUrl,
+    image_url: meta.image,
+    colors: colors.length ? colors : [{ name: 'ホワイト', hex: '#f7f7f7' }],
+    sizes: sizes.length ? sizes : ['S','M','L','XL'],
+  };
+}
+
 function parseDesign(row) {
   return {
     ...row,
     colors: safeJson(row.colors_json, []),
     sizes: safeJson(row.sizes_json, []),
+    products: row.products_json ? safeJson(row.products_json, []) : [],
   };
 }
 
-function safeJson(value, fallback) {
-  try { return JSON.parse(value || ''); } catch { return fallback; }
+async function getDesignWithProducts(whereSql = '', params = []) {
+  const designs = await all(`SELECT * FROM designs ${whereSql} ORDER BY display_order ASC, id ASC`, params);
+  const products = await all('SELECT * FROM products WHERE active = 1 ORDER BY design_id ASC, display_order ASC, id ASC');
+  const productsByDesign = {};
+  for (const p of products) {
+    if (!productsByDesign[p.design_id]) productsByDesign[p.design_id] = [];
+    productsByDesign[p.design_id].push({
+      ...p,
+      colors: safeJson(p.colors_json, []),
+      sizes: safeJson(p.sizes_json, []),
+    });
+  }
+  return designs.map(d => parseDesign({ ...d, products_json: JSON.stringify(productsByDesign[d.id] || []) }));
 }
 
 app.get('/api/designs', async (req, res) => {
   try {
     const admin = req.query.admin === '1';
-    const sql = admin
-      ? 'SELECT * FROM designs ORDER BY display_order ASC, id ASC'
-      : 'SELECT * FROM designs WHERE active = 1 ORDER BY display_order ASC, id ASC';
-    const rows = await all(sql);
-    res.json(rows.map(parseDesign));
+    const rows = admin
+      ? await getDesignWithProducts('')
+      : await getDesignWithProducts('WHERE active = 1');
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -92,6 +294,129 @@ app.post('/api/designs', async (req, res) => {
   }
 });
 
+app.post('/api/designs/:id/fetch-meta', async (req, res) => {
+  try {
+    const design = await get('SELECT * FROM designs WHERE id = ?', [req.params.id]);
+    if (!design) return res.status(404).json({ error: 'design not found' });
+
+    const html = await fetchHtml(design.source_url);
+    const meta = pickMeta(html, design.source_url);
+    const nextName = req.body?.overwriteName && meta.title ? meta.title : design.name;
+    const nextDescription = req.body?.overwriteDescription && meta.description ? meta.description : design.description;
+    const nextImage = meta.image || design.design_image_url;
+
+    await run(
+      `UPDATE designs
+       SET name = ?, description = ?, design_image_url = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [nextName, nextDescription, nextImage, req.params.id]
+    );
+
+    const updated = await get('SELECT * FROM designs WHERE id = ?', [req.params.id]);
+    res.json({ design: parseDesign(updated), meta });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/designs/:id/scrape-products', async (req, res) => {
+  try {
+    const design = await get('SELECT * FROM designs WHERE id = ?', [req.params.id]);
+    if (!design) return res.status(404).json({ error: 'design not found' });
+
+    const designHtml = await fetchHtml(design.source_url);
+    const meta = pickMeta(designHtml, design.source_url);
+    if (meta.image) {
+      await run('UPDATE designs SET design_image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [meta.image, design.id]);
+    }
+
+    const links = extractProductLinksFromDesignPage(designHtml, design.source_url, design.name);
+    await run('DELETE FROM products WHERE design_id = ?', [design.id]);
+
+    const results = [];
+    for (let i = 0; i < links.length; i++) {
+      try {
+        const product = await scrapeProduct(links[i].url);
+        await run(
+          `INSERT INTO products (design_id, name, source_url, image_url, colors_json, sizes_json, active, display_order)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+          [design.id, product.name || links[i].text, product.source_url, product.image_url, JSON.stringify(product.colors), JSON.stringify(product.sizes), i + 1]
+        );
+        results.push({ ok: true, url: links[i].url, name: product.name, colors: product.colors.length, sizes: product.sizes.length });
+      } catch (e) {
+        results.push({ ok: false, url: links[i].url, error: e.message });
+      }
+    }
+
+    res.json({ design_id: design.id, found: links.length, results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/designs/scrape-all-products', async (req, res) => {
+  try {
+    const designs = await all('SELECT * FROM designs ORDER BY display_order ASC, id ASC');
+    const allResults = [];
+    for (const design of designs) {
+      try {
+        const designHtml = await fetchHtml(design.source_url);
+        const meta = pickMeta(designHtml, design.source_url);
+        if (meta.image) {
+          await run('UPDATE designs SET design_image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [meta.image, design.id]);
+        }
+        const links = extractProductLinksFromDesignPage(designHtml, design.source_url, design.name);
+        await run('DELETE FROM products WHERE design_id = ?', [design.id]);
+        const productResults = [];
+        for (let i = 0; i < links.length; i++) {
+          try {
+            const product = await scrapeProduct(links[i].url);
+            await run(
+              `INSERT INTO products (design_id, name, source_url, image_url, colors_json, sizes_json, active, display_order)
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+              [design.id, product.name || links[i].text, product.source_url, product.image_url, JSON.stringify(product.colors), JSON.stringify(product.sizes), i + 1]
+            );
+            productResults.push({ ok: true, name: product.name, url: links[i].url });
+          } catch (e) {
+            productResults.push({ ok: false, url: links[i].url, error: e.message });
+          }
+        }
+        allResults.push({ id: design.id, name: design.name, ok: true, found: links.length, products: productResults });
+      } catch (e) {
+        allResults.push({ id: design.id, name: design.name, ok: false, error: e.message });
+      }
+    }
+    res.json({ results: allResults });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/designs/fetch-all-meta', async (req, res) => {
+  try {
+    const designs = await all('SELECT * FROM designs ORDER BY display_order ASC, id ASC');
+    const results = [];
+    for (const design of designs) {
+      try {
+        const html = await fetchHtml(design.source_url);
+        const meta = pickMeta(html, design.source_url);
+        const nextImage = meta.image || design.design_image_url;
+        const nextDescription = design.description || meta.description || '';
+        await run(
+          `UPDATE designs SET design_image_url = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [nextImage, nextDescription, design.id]
+        );
+        results.push({ id: design.id, name: design.name, ok: true, image: nextImage });
+      } catch (e) {
+        results.push({ id: design.id, name: design.name, ok: false, error: e.message });
+      }
+    }
+    res.json({ results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/designs/:id/upload', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'image file is required' });
@@ -107,6 +432,7 @@ app.post('/api/designs/:id/upload', upload.single('image'), async (req, res) => 
 app.delete('/api/designs/:id', async (req, res) => {
   try {
     await run('DELETE FROM designs WHERE id = ?', [req.params.id]);
+    await run('DELETE FROM products WHERE design_id = ?', [req.params.id]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -115,17 +441,19 @@ app.delete('/api/designs/:id', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   try {
-    const { staff_name, department, design_id, color, size, note } = req.body;
-    if (!staff_name || !design_id || !color || !size) {
-      return res.status(400).json({ error: 'staff_name, design_id, color, size are required' });
+    const { staff_name, department, design_id, product_id, color, size, note } = req.body;
+    if (!staff_name || !design_id || !product_id || !color || !size) {
+      return res.status(400).json({ error: 'staff_name, design_id, product_id, color, size are required' });
     }
     const design = await get('SELECT * FROM designs WHERE id = ?', [design_id]);
+    const product = await get('SELECT * FROM products WHERE id = ?', [product_id]);
     if (!design) return res.status(404).json({ error: 'design not found' });
+    if (!product) return res.status(404).json({ error: 'product not found' });
 
     const result = await run(
-      `INSERT INTO orders (staff_name, department, design_id, design_name, color, size, quantity, note)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-      [staff_name, department || '', design_id, design.name, color, size, note || '']
+      `INSERT INTO orders (staff_name, department, design_id, design_name, product_id, product_name, product_url, color, size, quantity, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [staff_name, department || '', design_id, design.name, product_id, product.name, product.source_url, color, size, note || '']
     );
     const order = await get('SELECT * FROM orders WHERE id = ?', [result.id]);
     res.json(order);
@@ -146,13 +474,13 @@ app.get('/api/orders', async (req, res) => {
 app.get('/api/summary', async (req, res) => {
   try {
     const byVariant = await all(
-      `SELECT design_name, color, size, SUM(quantity) AS total
+      `SELECT design_name, product_name, color, size, SUM(quantity) AS total
        FROM orders
-       GROUP BY design_name, color, size
-       ORDER BY design_name, color, size`
+       GROUP BY design_name, product_name, color, size
+       ORDER BY design_name, product_name, color, size`
     );
     const byStaff = await all(
-      `SELECT staff_name, department, design_name, color, size, quantity, note, created_at
+      `SELECT staff_name, department, design_name, product_name, color, size, quantity, note, created_at
        FROM orders
        ORDER BY staff_name ASC, created_at DESC`
     );
@@ -166,7 +494,7 @@ app.get('/api/summary', async (req, res) => {
 app.get('/api/export/orders.csv', async (req, res) => {
   try {
     const rows = await all('SELECT * FROM orders ORDER BY datetime(created_at) DESC, id DESC');
-    const headers = ['id', 'created_at', 'staff_name', 'department', 'design_name', 'color', 'size', 'quantity', 'note'];
+    const headers = ['id', 'created_at', 'staff_name', 'department', 'design_name', 'product_name', 'product_url', 'color', 'size', 'quantity', 'note'];
     const escapeCsv = (value) => {
       const str = String(value ?? '');
       if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
