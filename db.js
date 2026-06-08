@@ -51,6 +51,7 @@ async function initDb() {
       source_url TEXT,
       description TEXT,
       design_image_url TEXT,
+      images_json TEXT,
       colors_json TEXT NOT NULL,
       sizes_json TEXT NOT NULL,
       active INTEGER DEFAULT 1,
@@ -67,6 +68,7 @@ async function initDb() {
       name TEXT NOT NULL,
       source_url TEXT,
       image_url TEXT,
+      images_json TEXT,
       colors_json TEXT NOT NULL,
       sizes_json TEXT NOT NULL,
       active INTEGER DEFAULT 1,
@@ -97,6 +99,7 @@ async function initDb() {
     )
   `);
 
+  await addColumnIfMissing('products', 'images_json', 'TEXT');
   await addColumnIfMissing('orders', 'product_id', 'INTEGER');
   await addColumnIfMissing('orders', 'product_name', 'TEXT');
   await addColumnIfMissing('orders', 'product_url', 'TEXT');

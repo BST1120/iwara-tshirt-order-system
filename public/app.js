@@ -19,32 +19,29 @@ function renderDesignGrid() {
   state.designs.forEach(design => {
     const products = design.products || [];
     const primary = products[0] || null;
-    const colors = uniqueColors(products.length ? products.flatMap(p => p.colors || []) : (design.colors || []));
-    const sizes = uniqueSizes(products.length ? products.flatMap(p => p.sizes || []) : (design.sizes || []));
 
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card design-card';
+    card.dataset.designId = design.id;
     card.innerHTML = `
-      <div class="preview-wrap">${renderPreview(design, primary, colors[0])}</div>
+      <div class="preview-wrap">${renderPreviewGallery(design, primary)}</div>
       <div class="card-body">
         <h3>${escapeHtml(design.name)}</h3>
-        <p>${products.length ? `${products.length}種類の型から選択できます。` : '型・色・サイズ情報を管理画面から取得してください。'}</p>
-        <div class="label-row">
-          <span>型</span>
-          <span>${products.slice(0, 3).map(p => escapeHtml(p.name)).join(' / ') || '未取得'}</span>
+        <p>${products.length ? `${products.length}種類の型から選択できます。型を切り替えると、色とサイズが下に反映されます。` : '型・色・サイズ情報を管理画面から取得してください。'}</p>
+
+        <div class="field compact-field">
+          <label>型を確認</label>
+          <select class="card-product-select" data-card-product="${design.id}">
+            ${products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('') || '<option value="">未取得</option>'}
+          </select>
         </div>
-        <div class="label-row">
-          <span>色</span>
-          ${colors.slice(0, 8).map(c => `<span class="swatch"><span class="swatch-chip" style="background:${c.hex || '#ddd'}"></span>${escapeHtml(c.name)}</span>`).join('')}
-          ${colors.length > 8 ? `<span class="muted small">ほか${colors.length - 8}色</span>` : ''}
+
+        <div class="card-variant-info" data-card-info="${design.id}">
+          ${renderVariantInfo(primary)}
         </div>
-        <div class="label-row">
-          <span>サイズ</span>
-          ${sizes.slice(0, 8).map(size => `<span class="button secondary small">${escapeHtml(size)}</span>`).join('')}
-          ${sizes.length > 8 ? `<span class="muted small">ほか${sizes.length - 8}サイズ</span>` : ''}
-        </div>
+
         <div class="actions" style="margin-top:12px">
-          <button data-select-id="${design.id}">このデザインを選ぶ</button>
+          <button data-select-id="${design.id}">このデザインを注文する</button>
           <a class="button secondary" href="${design.source_url}" target="_blank" rel="noopener">元ページを見る</a>
         </div>
       </div>
@@ -55,6 +52,35 @@ function renderDesignGrid() {
   grid.querySelectorAll('[data-select-id]').forEach(btn => {
     btn.addEventListener('click', () => selectDesign(Number(btn.dataset.selectId), true));
   });
+
+  grid.querySelectorAll('[data-card-product]').forEach(select => {
+    select.addEventListener('change', () => {
+      const designId = Number(select.dataset.cardProduct);
+      const design = state.designs.find(d => d.id === designId);
+      const product = (design?.products || []).find(p => String(p.id) === String(select.value)) || null;
+      const card = select.closest('.design-card');
+      const preview = card.querySelector('.preview-wrap');
+      const info = card.querySelector(`[data-card-info="${designId}"]`);
+      preview.innerHTML = renderPreviewGallery(design, product);
+      info.innerHTML = renderVariantInfo(product);
+    });
+  });
+}
+
+function renderVariantInfo(product) {
+  if (!product) {
+    return `<div class="muted small">型情報が未取得です。管理画面から取得してください。</div>`;
+  }
+  return `
+    <div class="label-row">
+      <span>色</span>
+      ${(product.colors || []).map(c => `<span class="swatch"><span class="swatch-chip" style="background:${c.hex || '#ddd'}"></span>${escapeHtml(c.name)}</span>`).join('') || '<span class="muted">未取得</span>'}
+    </div>
+    <div class="label-row">
+      <span>サイズ</span>
+      ${(product.sizes || []).map(size => `<span class="button secondary small">${escapeHtml(size)}</span>`).join('') || '<span class="muted">未取得</span>'}
+    </div>
+  `;
 }
 
 function populateDesignSelect() {
@@ -143,7 +169,7 @@ function updatePreviewPane() {
     return;
   }
   const colorObj = state.selectedProduct?.colors?.find(c => c.name === state.selectedColor) || state.selectedProduct?.colors?.[0] || state.selectedDesign.colors?.[0];
-  preview.innerHTML = renderPreview(state.selectedDesign, state.selectedProduct, colorObj);
+  preview.innerHTML = renderPreviewGallery(state.selectedDesign, state.selectedProduct) || renderPreview(state.selectedDesign, state.selectedProduct, colorObj);
 
   const link = document.getElementById('productSourceLink');
   if (link) {
@@ -155,6 +181,34 @@ function updatePreviewPane() {
       link.classList.add('hidden');
     }
   }
+}
+
+function renderPreviewGallery(design, product) {
+  const images = [];
+  if (design?.design_image_url) images.push({ url: design.design_image_url, label: 'デザイン' });
+  (product?.images || []).forEach((img, idx) => {
+    if (!img?.url) return;
+    if (images.some(i => i.url === img.url)) return;
+    const fallback = idx === 0 ? '表' : idx === 1 ? '裏' : `画像${idx + 1}`;
+    images.push({ url: img.url, label: img.label || fallback });
+  });
+  if (product?.image_url && !images.some(i => i.url === product.image_url)) {
+    images.push({ url: product.image_url, label: '商品画像' });
+  }
+
+  const shown = images.slice(0, 3);
+  if (!shown.length) return renderPreview(design, product, product?.colors?.[0]);
+
+  return `
+    <div class="triple-preview">
+      ${shown.map((img, idx) => `
+        <div class="mini-preview">
+          <div class="mini-label">${escapeHtml(idx === 0 ? 'デザイン' : idx === 1 ? '表' : '裏')}</div>
+          <img src="${img.url}" alt="${escapeHtml(img.label || design.name)}" />
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 function renderPreview(design, product, colorObj) {

@@ -197,20 +197,110 @@ function extractProductLinksFromDesignPage(html, baseUrl, designName) {
   return links.slice(0, 30);
 }
 
+
+const PRODUCT_NAME_PATTERNS = [
+  'ハイグレードTシャツ',
+  'ビッグシルエットTシャツ',
+  'スーパーヘビーTシャツ',
+  'スタンダードTシャツ',
+  'ライトウェイトTシャツ',
+  'オーガニックコットンTシャツ',
+  'ドライTシャツ',
+  'ロングTシャツ',
+  'プレミアムTシャツ',
+  'レディースTシャツ',
+  'キッズTシャツ',
+  'ポロシャツ',
+  'パーカー',
+  'ジップパーカー',
+  'スウェット',
+  'トートバッグ',
+  'サコッシュ',
+  '缶バッジ',
+  'アクリルキーホルダー',
+  'アクリルスタンド',
+  'ステッカー',
+];
+
+function normalizeProductName(text, fallbackTitle = '') {
+  const combined = decodeHtml(`${text || ''} ${fallbackTitle || ''}`)
+    .replace(/[|｜].*?Tシャツトリニティ.*$/g, ' ')
+    .replace(/注文時の注意事項[\s\S]*$/g, ' ')
+    .replace(/この商品について[\s\S]*$/g, ' ')
+    .replace(/素材・仕様[\s\S]*$/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  for (const pattern of PRODUCT_NAME_PATTERNS) {
+    if (combined.includes(pattern)) return pattern;
+  }
+
+  const baseMatch = combined.match(/ベースアイテム\s*([^\s]+(?:Tシャツ|パーカー|スウェット|ポロシャツ|バッグ|缶バッジ|キーホルダー|スタンド|ステッカー))/);
+  if (baseMatch) return baseMatch[1].trim();
+
+  const title = decodeHtml(fallbackTitle || '').replace(/\|デザインTシャツ通販.*$/, '').trim();
+  const paren = title.match(/（([^）]+)）/);
+  if (paren && paren[1].length <= 30) return paren[1];
+
+  const first = combined.split(/\s+/).find(t => /Tシャツ|パーカー|スウェット|ポロシャツ|バッグ|缶バッジ|キーホルダー|スタンド|ステッカー/.test(t));
+  return first && first.length <= 30 ? first : '商品';
+}
+
+function extractImages(html, baseUrl) {
+  const images = [];
+  const add = (url, label = '') => {
+    const abs = absoluteUrl(url, baseUrl);
+    if (!abs || images.some(i => i.url === abs)) return;
+    if (!/\.(jpg|jpeg|png|webp)(\?|$)/i.test(abs) && !/image|img|product|item|design|up-t/i.test(abs)) return;
+    images.push({ url: abs, label });
+  };
+
+  const og = readMeta(html, 'og:image') || readMeta(html, 'twitter:image') || readMeta(html, 'twitter:image:src');
+  if (og) add(og, '代表画像');
+
+  const imgRegex = /<img[^>]+>/gi;
+  let match;
+  while ((match = imgRegex.exec(html))) {
+    const tag = match[0];
+    const src =
+      (tag.match(/\sdata-src=["']([^"']+)["']/i) || [])[1] ||
+      (tag.match(/\ssrc=["']([^"']+)["']/i) || [])[1] ||
+      (tag.match(/\sdata-original=["']([^"']+)["']/i) || [])[1];
+
+    const alt = decodeHtml(((tag.match(/\salt=["']([^"']*)["']/i) || [])[1] || ''));
+    const cls = decodeHtml(((tag.match(/\sclass=["']([^"']*)["']/i) || [])[1] || ''));
+    const around = `${alt} ${cls} ${src || ''}`;
+
+    if (/logo|icon|sprite|avatar|banner/i.test(around)) continue;
+    if (/商品|Tシャツ|デザイン|front|back|main|sub|color|item|product|thumb|プリント|画像/i.test(around)) {
+      add(src, alt || '商品画像');
+    }
+  }
+
+  return images.slice(0, 8);
+}
+
 async function scrapeProduct(productUrl) {
   const html = await fetchHtml(productUrl);
   const meta = pickMeta(html, productUrl);
   const pageText = stripTags(html);
-  const baseMatch = pageText.match(/ベースアイテム\s+([^\n\r]+?)(?:\s+[^ ]+の特徴|の特徴|素材・仕様|品番)/);
-  const baseItem = baseMatch ? decodeHtml(baseMatch[1]).replace(/\s+/g, ' ').trim() : '';
-  const name = baseItem || meta.title.replace(/^.*?[｜|]\s*/, '').replace(/^.*?（(.+?)）.*$/, '$1').trim() || meta.title;
+
+  const baseMatch = pageText.match(/ベースアイテム\s+(.{1,80}?)(?:\s+[^ ]+の特徴|の特徴|素材・仕様|品番|カラー|サイズ)/);
+  const baseItem = baseMatch ? normalizeProductName(baseMatch[1], meta.title) : '';
+  const name = baseItem && baseItem !== '商品' ? baseItem : normalizeProductName(pageText.slice(0, 1200), meta.title);
+
   const colors = extractColors(html);
   const sizes = extractSizes(html);
+  const images = extractImages(html, productUrl);
+  if (meta.image && !images.some(i => i.url === meta.image)) {
+    images.unshift({ url: meta.image, label: '代表画像' });
+  }
 
   return {
     name,
     source_url: productUrl,
-    image_url: meta.image,
+    image_url: images[0]?.url || meta.image,
+    images,
     colors: colors.length ? colors : [{ name: 'ホワイト', hex: '#f7f7f7' }],
     sizes: sizes.length ? sizes : ['S','M','L','XL'],
   };
@@ -235,6 +325,7 @@ async function getDesignWithProducts(whereSql = '', params = []) {
       ...p,
       colors: safeJson(p.colors_json, []),
       sizes: safeJson(p.sizes_json, []),
+      images: p.images_json ? safeJson(p.images_json, []) : [],
     });
   }
   return designs.map(d => parseDesign({ ...d, products_json: JSON.stringify(productsByDesign[d.id] || []) }));
@@ -338,9 +429,9 @@ app.post('/api/designs/:id/scrape-products', async (req, res) => {
       try {
         const product = await scrapeProduct(links[i].url);
         await run(
-          `INSERT INTO products (design_id, name, source_url, image_url, colors_json, sizes_json, active, display_order)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-          [design.id, product.name || links[i].text, product.source_url, product.image_url, JSON.stringify(product.colors), JSON.stringify(product.sizes), i + 1]
+          `INSERT INTO products (design_id, name, source_url, image_url, images_json, colors_json, sizes_json, active, display_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          [design.id, product.name || normalizeProductName(links[i].text), product.source_url, product.image_url, JSON.stringify(product.images || []), JSON.stringify(product.colors), JSON.stringify(product.sizes), i + 1]
         );
         results.push({ ok: true, url: links[i].url, name: product.name, colors: product.colors.length, sizes: product.sizes.length });
       } catch (e) {
@@ -372,9 +463,9 @@ app.post('/api/designs/scrape-all-products', async (req, res) => {
           try {
             const product = await scrapeProduct(links[i].url);
             await run(
-              `INSERT INTO products (design_id, name, source_url, image_url, colors_json, sizes_json, active, display_order)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-              [design.id, product.name || links[i].text, product.source_url, product.image_url, JSON.stringify(product.colors), JSON.stringify(product.sizes), i + 1]
+              `INSERT INTO products (design_id, name, source_url, image_url, images_json, colors_json, sizes_json, active, display_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+              [design.id, product.name || normalizeProductName(links[i].text), product.source_url, product.image_url, JSON.stringify(product.images || []), JSON.stringify(product.colors), JSON.stringify(product.sizes), i + 1]
             );
             productResults.push({ ok: true, name: product.name, url: links[i].url });
           } catch (e) {

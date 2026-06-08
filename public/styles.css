@@ -106,3 +106,49 @@ th { background: #f8fbff; font-size: 13px; color: var(--muted); }
   object-fit: contain;
   display: block;
 }
+
+
+.compact-field { margin: 12px 0; }
+.compact-field select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: white; font: inherit; }
+
+.triple-preview {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+.mini-preview {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+}
+.mini-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fbff;
+  text-align: center;
+}
+.mini-preview img {
+  width: 100%;
+  height: 135px;
+  object-fit: contain;
+  display: block;
+  padding: 6px;
+}
+.card-variant-info {
+  border-top: 1px dashed var(--line);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+@media (max-width: 620px) {
+  .triple-preview { grid-template-columns: 1fr; }
+  .mini-preview img { height: 180px; }
+}
