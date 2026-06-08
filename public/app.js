@@ -24,10 +24,10 @@ function renderDesignGrid() {
     card.className = 'card design-card';
     card.dataset.designId = design.id;
     card.innerHTML = `
-      <div class="preview-wrap">${renderPreviewGallery(design, primary)}</div>
+      <div class="preview-wrap">${renderPreview(design, primary, primary?.colors?.[0])}</div>
       <div class="card-body">
         <h3>${escapeHtml(design.name)}</h3>
-        <p>${products.length ? `${products.length}種類の型から選択できます。型を切り替えると、色とサイズが下に反映されます。` : '型・色・サイズ情報を管理画面から取得してください。'}</p>
+        <p>${products.length ? `${products.length}種類の型から選択できます。型・色・サイズを確認してから注文できます。` : '型・色・サイズ情報を管理画面から取得してください。'}</p>
 
         <div class="field compact-field">
           <label>型を確認</label>
@@ -40,8 +40,12 @@ function renderDesignGrid() {
           ${renderVariantInfo(primary)}
         </div>
 
+        <div class="selected-summary muted small" data-card-summary="${design.id}">
+          ${renderSelectedSummary(primary, primary?.colors?.[0]?.name || '', primary?.sizes?.[0] || '')}
+        </div>
+
         <div class="actions" style="margin-top:12px">
-          <button data-select-id="${design.id}">このデザインを注文する</button>
+          <button data-select-id="${design.id}">この内容で注文フォームへ</button>
           <a class="button secondary" href="${design.source_url}" target="_blank" rel="noopener">元ページを見る</a>
         </div>
       </div>
@@ -50,7 +54,14 @@ function renderDesignGrid() {
   });
 
   grid.querySelectorAll('[data-select-id]').forEach(btn => {
-    btn.addEventListener('click', () => selectDesign(Number(btn.dataset.selectId), true));
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.design-card');
+      const designId = Number(btn.dataset.selectId);
+      const productId = Number(card.querySelector('.card-product-select')?.value || 0);
+      const color = card.querySelector('.card-color-select')?.value || '';
+      const size = card.querySelector('.card-size-select')?.value || '';
+      selectDesign(designId, true, { productId, color, size });
+    });
   });
 
   grid.querySelectorAll('[data-card-product]').forEach(select => {
@@ -61,10 +72,33 @@ function renderDesignGrid() {
       const card = select.closest('.design-card');
       const preview = card.querySelector('.preview-wrap');
       const info = card.querySelector(`[data-card-info="${designId}"]`);
-      preview.innerHTML = renderPreviewGallery(design, product);
+      const summary = card.querySelector(`[data-card-summary="${designId}"]`);
+
+      preview.innerHTML = renderPreview(design, product, product?.colors?.[0]);
       info.innerHTML = renderVariantInfo(product);
+      summary.innerHTML = renderSelectedSummary(product, product?.colors?.[0]?.name || '', product?.sizes?.[0] || '');
+      attachCardVariantEvents(card, design, product);
     });
   });
+
+  grid.querySelectorAll('.design-card').forEach(card => {
+    const designId = Number(card.dataset.designId);
+    const design = state.designs.find(d => d.id === designId);
+    const product = design?.products?.[0] || null;
+    attachCardVariantEvents(card, design, product);
+  });
+}
+
+function attachCardVariantEvents(card, design, product) {
+  const colorSelect = card.querySelector('.card-color-select');
+  const sizeSelect = card.querySelector('.card-size-select');
+  const summary = card.querySelector(`[data-card-summary="${design?.id}"]`);
+  const update = () => {
+    if (!summary) return;
+    summary.innerHTML = renderSelectedSummary(product, colorSelect?.value || '', sizeSelect?.value || '');
+  };
+  if (colorSelect) colorSelect.addEventListener('change', update);
+  if (sizeSelect) sizeSelect.addEventListener('change', update);
 }
 
 function renderVariantInfo(product) {
@@ -72,16 +106,28 @@ function renderVariantInfo(product) {
     return `<div class="muted small">型情報が未取得です。管理画面から取得してください。</div>`;
   }
   return `
-    <div class="label-row">
-      <span>色</span>
-      ${(product.colors || []).map(c => `<span class="swatch"><span class="swatch-chip" style="background:${c.hex || '#ddd'}"></span>${escapeHtml(c.name)}</span>`).join('') || '<span class="muted">未取得</span>'}
-    </div>
-    <div class="label-row">
-      <span>サイズ</span>
-      ${(product.sizes || []).map(size => `<span class="button secondary small">${escapeHtml(size)}</span>`).join('') || '<span class="muted">未取得</span>'}
+    <div class="form-grid card-mini-grid">
+      <div class="field compact-field">
+        <label>選択できるカラー</label>
+        <select class="card-color-select">
+          ${(product.colors || []).map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('') || '<option value="">未取得</option>'}
+        </select>
+      </div>
+      <div class="field compact-field">
+        <label>選択できるサイズ</label>
+        <select class="card-size-select">
+          ${(product.sizes || []).map(size => `<option value="${escapeHtml(size)}">${escapeHtml(size)}</option>`).join('') || '<option value="">未取得</option>'}
+        </select>
+      </div>
     </div>
   `;
 }
+
+function renderSelectedSummary(product, color, size) {
+  if (!product) return '';
+  return `選択中：${escapeHtml(product.name)} / ${escapeHtml(color || 'カラー未選択')} / ${escapeHtml(size || 'サイズ未選択')}`;
+}
+
 
 function populateDesignSelect() {
   const select = document.getElementById('designSelect');
@@ -94,15 +140,30 @@ function populateDesignSelect() {
   });
 }
 
-function selectDesign(id, scroll = false) {
+function selectDesign(id, scroll = false, preset = {}) {
   const design = state.designs.find(d => d.id === id);
   state.selectedDesign = design || null;
-  state.selectedProduct = design?.products?.[0] || null;
-  state.selectedColor = state.selectedProduct?.colors?.[0]?.name || null;
+  state.selectedProduct =
+    (design?.products || []).find(p => Number(p.id) === Number(preset.productId)) ||
+    design?.products?.[0] ||
+    null;
+  state.selectedColor = preset.color || state.selectedProduct?.colors?.[0]?.name || null;
 
   document.getElementById('designSelect').value = design ? String(design.id) : '';
   updateProductSelector();
   updateVariantSelectors();
+
+  if (state.selectedProduct) {
+    document.getElementById('productSelect').value = String(state.selectedProduct.id);
+  }
+  if (preset.color) {
+    document.getElementById('colorSelect').value = preset.color;
+    state.selectedColor = preset.color;
+  }
+  if (preset.size) {
+    document.getElementById('sizeSelect').value = preset.size;
+  }
+
   updatePreviewPane();
   if (scroll) document.getElementById('orderSection').scrollIntoView({ behavior: 'smooth' });
 }
@@ -169,7 +230,7 @@ function updatePreviewPane() {
     return;
   }
   const colorObj = state.selectedProduct?.colors?.find(c => c.name === state.selectedColor) || state.selectedProduct?.colors?.[0] || state.selectedDesign.colors?.[0];
-  preview.innerHTML = renderPreviewGallery(state.selectedDesign, state.selectedProduct) || renderPreview(state.selectedDesign, state.selectedProduct, colorObj);
+  preview.innerHTML = renderPreview(state.selectedDesign, state.selectedProduct, colorObj);
 
   const link = document.getElementById('productSourceLink');
   if (link) {
