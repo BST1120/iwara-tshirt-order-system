@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>いわら保育園 Tシャツ注文ページ</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>いわら保育園 Tシャツ注文ページ</h1>
+      <p>デザイン・型・色・サイズを選んで、そのまま提出できます。最終発注は管理者が行います。</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="section">
+      <div class="notice">
+        職員1人につき <strong>1枚は無料</strong> です。<br>
+        2枚目以降の希望、サイズの相談、その他確認事項がある場合は、下の備考欄に記入してください。<br><br>
+        <strong>前後にデザインがある商品もあります。</strong><br>
+        必ず「元ページ」を確認し、表・裏のデザインや実際の商品表示を確認してから注文してください。
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>デザイン一覧</h2>
+      <p class="muted">公開中のデザインだけが表示されています。各デザインの中で、型・色・サイズを選べます。</p>
+      <div id="designGrid" class="grid"></div>
+    </section>
+
+    <section id="orderSection" class="section split">
+      <div class="form-card">
+        <h2>注文フォーム</h2>
+        <form id="orderForm">
+          <div class="form-grid">
+            <div class="field">
+              <label for="staffName">職員名</label>
+              <input id="staffName" name="staffName" required placeholder="例：山田 太郎" />
+            </div>
+            <div class="field">
+              <label for="department">所属 / 備考用識別</label>
+              <input id="department" name="department" placeholder="例：いわら保育園 / 事務" />
+            </div>
+            <div class="field">
+              <label for="designSelect">① デザイン</label>
+              <select id="designSelect" required></select>
+            </div>
+            <div class="field">
+              <label for="productSelect">② シャツの型</label>
+              <select id="productSelect" required></select>
+              <div class="helper">例：ハイグレードTシャツ、ビッグシルエットTシャツなど</div>
+            </div>
+            <div class="field">
+              <label for="colorSelect">③ 色</label>
+              <select id="colorSelect" required></select>
+            </div>
+            <div class="field">
+              <label for="sizeSelect">④ サイズ</label>
+              <select id="sizeSelect" required></select>
+            </div>
+            <div class="field" style="grid-column: 1 / -1;">
+              <label for="note">備考 / 相談欄</label>
+              <textarea id="note" placeholder="例：2枚目も欲しいです / サイズで迷っています"></textarea>
+              <div class="helper">2枚目以降の希望は、ここに記入して管理者に相談してください。</div>
+            </div>
+          </div>
+          <div class="actions" style="margin-top:16px">
+            <button type="submit">注文内容を送信</button>
+          </div>
+          <p id="resultBox" class="helper"></p>
+        </form>
+      </div>
+
+      <div class="form-card">
+        <h2>選択中プレビュー</h2>
+        <div id="selectedPreview" class="preview-wrap" style="min-height:320px">
+          <div class="muted">デザインを選ぶと、ここにプレビューが表示されます。</div>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <a id="productSourceLink" class="button secondary hidden" href="#" target="_blank" rel="noopener">選択中商品の元ページを見る</a>
+        </div>
+        <p class="helper">表示画像はTシャツトリニティの商品画像を参照しています。実際の注文は管理者が集計後に行います。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
